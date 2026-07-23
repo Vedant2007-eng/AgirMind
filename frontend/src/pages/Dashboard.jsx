@@ -79,6 +79,8 @@ export default function Dashboard({ activeNav = "dashboard", onNavigate }) {
   const [weather, setWeather] = useState(null);
   const [weatherError, setWeatherError] = useState(null);
 
+  const [simulating, setSimulating] = useState(false);
+
   useEffect(() => {
     const seasonPlanId = localStorage.getItem("agrimind_seasonPlanId");
 
@@ -110,6 +112,33 @@ export default function Dashboard({ activeNav = "dashboard", onNavigate }) {
       .then((data) => setWeather(data))
       .catch((err) => setWeatherError(err.message));
   }, []);
+
+  const simulateHeavyRain = async () => {
+    const seasonPlanId = localStorage.getItem("agrimind_seasonPlanId");
+    if (!seasonPlanId || simulating) return;
+
+    setSimulating(true);
+    try {
+      await fetch("/api/update-plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          seasonPlanId,
+          reason: "weather_event",
+          weatherEvent: { rainfallMm: 45 },
+        }),
+      });
+      // Refetch so the UI shows the updated plan immediately
+      const res = await fetch(`/api/season-plan?seasonPlanId=${seasonPlanId}`);
+      const data = await res.json();
+      setSeasonPlan(data.seasonPlan);
+      setTasks(data.tasks || []);
+    } catch (err) {
+      console.error("Failed to simulate weather event", err);
+    } finally {
+      setSimulating(false);
+    }
+  };
 
   const metrics = seasonPlan
     ? [
@@ -372,6 +401,14 @@ export default function Dashboard({ activeNav = "dashboard", onNavigate }) {
                           );
                         })}
                       </div>
+
+                      <button
+                        onClick={simulateHeavyRain}
+                        disabled={simulating}
+                        className="w-full mt-3 border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-60 rounded-lg py-2 text-[12px] font-medium"
+                      >
+                        {simulating ? "Simulating…" : "Simulate Heavy Rain Event"}
+                      </button>
                     </>
                   )}
                 </div>

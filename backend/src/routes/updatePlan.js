@@ -5,10 +5,10 @@ const Task = require("../db/models/Task");
 const Notification = require("../db/models/Notification");
 
 // POST /api/update-plan
-// body: { seasonPlanId, reason: "disease_detected" | "weather_event" | ..., diseaseResult? }
+// body: { seasonPlanId, reason: "disease_detected" | "weather_event" | ..., diseaseResult?, weatherEvent? }
 router.post("/", async (req, res) => {
   try {
-    const { seasonPlanId, reason, diseaseResult } = req.body;
+    const { seasonPlanId, reason, diseaseResult, weatherEvent } = req.body;
 
     if (!seasonPlanId || !reason) {
       return res.status(400).json({ error: "Missing seasonPlanId or reason" });
@@ -18,6 +18,7 @@ router.post("/", async (req, res) => {
     if (!seasonPlan) return res.status(404).json({ error: "Season plan not found" });
 
     let newTask = null;
+    let updatedTasks = [];
     let notificationMessage = "";
 
     // This is the "scoped replan" — only insert/modify the task(s) relevant
@@ -45,6 +46,51 @@ router.post("/", async (req, res) => {
       );
 
       notificationMessage = `${diseaseResult?.label ?? "A disease"} was detected, so a treatment task was added. Nothing else in your plan changed.`;
+    } else if (reason === "weather_event") {
+      const rainfallMm = weatherEvent?.rainfallMm ?? 40;
+
+      // Find pending irrigation tasks for this plan — these are the only
+      // tasks a heavy-rain event should touch.
+      const pendingIrrigationTasks = await Task.find({
+        seasonPlanId,
+        type: "irrigation",
+        status: "pending",
+      });
+
+      if (pendingIrrigationTasks.length > 0) {
+        // Skip the affected irrigation task(s) — the field doesn't need
+        // watering if heavy rain is expected.
+        await Task.updateMany(
+          { _id: { $in: pendingIrrigationTasks.map((t) => t._id) } },
+          { $set: { status: "skipped" } }
+        );
+        updatedTasks = pendingIrrigationTasks;
+
+        seasonPlan.reasoningLog.push(
+          {
+            agentType: "weather",
+            decisionSummary: `Heavy rain expected (${rainfallMm}mm forecast) — soil moisture will be replenished naturally.`,
+          },
+          {
+            agentType: "coordinator",
+            decisionSummary: `Scoped the change to the irrigation subgoal. Skipped ${pendingIrrigationTasks.length} pending irrigation task(s) to avoid overwatering. Fertilizer and scouting tasks untouched.`,
+          }
+        );
+
+        notificationMessage = `Heavy rain is expected (${rainfallMm}mm), so your next irrigation was skipped to avoid overwatering. Nothing else in your plan changed.`;
+      } else {
+        seasonPlan.reasoningLog.push(
+          {
+            agentType: "weather",
+            decisionSummary: `Heavy rain expected (${rainfallMm}mm forecast).`,
+          },
+          {
+            agentType: "coordinator",
+            decisionSummary: "No pending irrigation tasks were found to adjust — plan left unchanged.",
+          }
+        );
+        notificationMessage = `Heavy rain is expected, but no pending irrigation tasks needed adjusting.`;
+      }
     } else {
       seasonPlan.reasoningLog.push({
         agentType: "coordinator",
@@ -59,10 +105,15 @@ router.post("/", async (req, res) => {
     await Notification.create({
       seasonPlanId,
       message: notificationMessage,
-      severity: reason === "disease_detected" ? "warning" : "info",
+      severity: reason === "disease_detected" || reason === "weather_event" ? "warning" : "info",
     });
 
-    res.json({ seasonPlanId, version: seasonPlan.version, newTask });
+    res.json({
+      seasonPlanId,
+      version: seasonPlan.version,
+      newTask,
+      updatedTaskIds: updatedTasks.map((t) => t._id),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to update plan" });
