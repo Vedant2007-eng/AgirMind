@@ -68,6 +68,16 @@ function formatTime(dateStr) {
   return d.toLocaleString("en-IN", { weekday: undefined, hour: "2-digit", minute: "2-digit" });
 }
 
+function timeAgo(dateStr) {
+  const diffMs = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(dateStr).toLocaleDateString("en-IN");
+}
+
 export default function Dashboard({ activeNav = "dashboard", onNavigate }) {
   const [language, setLanguage] = useState("en");
   const [tab, setTab] = useState("today");
@@ -80,6 +90,9 @@ export default function Dashboard({ activeNav = "dashboard", onNavigate }) {
   const [weatherError, setWeatherError] = useState(null);
 
   const [simulating, setSimulating] = useState(false);
+
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
     const seasonPlanId = localStorage.getItem("agrimind_seasonPlanId");
@@ -112,6 +125,16 @@ export default function Dashboard({ activeNav = "dashboard", onNavigate }) {
       .then((data) => setWeather(data))
       .catch((err) => setWeatherError(err.message));
   }, []);
+
+  useEffect(() => {
+    const seasonPlanId = localStorage.getItem("agrimind_seasonPlanId");
+    if (!seasonPlanId) return;
+
+    fetch(`/api/notifications?seasonPlanId=${seasonPlanId}`)
+      .then((res) => res.json())
+      .then((data) => setNotifications(data.notifications || []))
+      .catch((err) => console.error("Failed to fetch notifications", err));
+  }, [seasonPlan?.version]);
 
   const simulateHeavyRain = async () => {
     const seasonPlanId = localStorage.getItem("agrimind_seasonPlanId");
@@ -249,10 +272,53 @@ export default function Dashboard({ activeNav = "dashboard", onNavigate }) {
               <span className="text-neutral-300">|</span>
               <span className={language === "mr" ? "font-semibold text-green-800" : "text-neutral-500"}>मराठी</span>
             </button>
-            <button className="relative border border-black/10 bg-white rounded-lg p-2.5">
-              <Bell className="w-4 h-4" />
-              <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-green-600" />
-            </button>
+
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications((s) => !s)}
+                className="relative border border-black/10 bg-white rounded-lg p-2.5"
+              >
+                <Bell className="w-4 h-4" />
+                {notifications.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-green-600 text-white text-[9px] flex items-center justify-center">
+                    {notifications.length > 9 ? "9+" : notifications.length}
+                  </span>
+                )}
+              </button>
+
+              {showNotifications && (
+                <div className="absolute right-0 mt-2 w-80 bg-white border border-black/10 rounded-xl shadow-lg z-10 max-h-96 overflow-y-auto">
+                  <div className="px-4 py-3 border-b border-black/5">
+                    <p className="text-[13px] font-semibold text-neutral-900">Notifications</p>
+                  </div>
+                  {notifications.length === 0 ? (
+                    <p className="text-[13px] text-neutral-400 text-center py-6">No notifications yet.</p>
+                  ) : (
+                    <div className="divide-y divide-black/5">
+                      {notifications.map((n) => (
+                        <div key={n._id} className="px-4 py-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="text-[13px] text-neutral-800 leading-snug">{n.message}</p>
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded-full shrink-0 ${
+                                n.severity === "critical"
+                                  ? "bg-red-50 text-red-600"
+                                  : n.severity === "warning"
+                                  ? "bg-amber-50 text-amber-600"
+                                  : "bg-blue-50 text-blue-600"
+                              }`}
+                            >
+                              {n.severity}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-neutral-400 mt-1">{timeAgo(n.createdAt)}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
